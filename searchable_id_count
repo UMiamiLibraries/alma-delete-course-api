@@ -1,0 +1,56 @@
+import requests
+from lxml import etree
+
+#global variables
+apikey = '' #use your api key from Ex Libris's Developer network
+offset = '0'
+response = None
+course_ids = []
+
+#*************************
+#method to call course api and retrieve all courses
+#parameters: none
+#response: xml response of courses
+#****************************
+def retrieve_courses():    
+
+    print("*******retrieving courses*******")
+    #create search parameters
+    payload = {
+        'apikey' : apikey,
+        'limit' : '100',
+        'offset' : offset,
+        'order_by' : 'code,section',
+        'direction' : 'ASC'
+        #'q' : 'code~2016'
+        }
+
+    #create request url
+    response = requests.get('https://api-na.hosted.exlibrisgroup.com/almaws/v1/courses/', params=payload)
+    print("***" + response.url + "***")
+   
+    root = etree.fromstring(response.content)
+    return root
+    
+#************************
+# first retrieve list of courses from get courses api
+# then get searhable ids object and count its length
+# if greater than 3, return that course code and status
+#**********************
+root = retrieve_courses()
+response_contains_courses = etree.XPath("/courses/course")
+        
+while response_contains_courses(root):
+    courses = root.xpath('//courses/course')
+    for course in root.iter("course"):
+        code = course.findall(".//code")
+        ids = course.findall(".//searchable_ids")
+        for id in ids:
+            if len(id) > 3:
+                courses_with_ids.append([course.findall(".//code")[0].text,course.findall(".//status")[0].text])
+    offset = str(int(offset) + 100)
+    root = retrieve_courses()
+
+coursefile = open('coursefile.txt', 'w')
+for course_with_3 in courses_with_ids:
+    coursefile.write(course_with_3[0] + "," + course_with_3[1] + "\n")
