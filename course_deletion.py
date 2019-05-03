@@ -6,7 +6,7 @@ import logging
 import datetime
 
 #global variables
-apikey = 'l7xx6c742abf1db6465c874977019efcfa48'
+apikey = ''
 offset = '0'
 response = None
 course_api_exception = []
