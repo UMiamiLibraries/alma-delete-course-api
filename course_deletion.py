@@ -1,25 +1,42 @@
 import requests
-from bs4 import BeautifulSoup
+#from bs4 import BeautifulSoup
 from lxml import etree
+import argparse
+import logging
+import datetime
 
 #global variables
-apikey = '' #use blackboard api key from ex libris developer site
+apikey = 'l7xx6c742abf1db6465c874977019efcfa48'
 offset = '0'
 response = None
-full_reading_list = []
-course_ids = []
-readinglistids = []
-courses_to_delete = []
+course_api_exception = []
+reading_list_api_exception = []
+term_code = None
 
-#*************************
-#method to call course api and retrieve all courses
-#parameters: none
-#response: xml response of courses
-#****************************
-def retrieve_courses():    
+#create new log file
+#2.6.6 needs a 0
+log_file = 'course_deletion_' + '{0:%Y%m%dT%H%M%S}'.format(datetime.datetime.now()) + '.log'
+logging.basicConfig(filename=log_file,level=logging.DEBUG,format='%(message)s')
+logging.getLogger("requests").setLevel(logging.WARNING)
 
-    print("*******retrieving courses*******")
-    #create search parameters
+parser = argparse.ArgumentParser(description='Process string for code parser.')
+parser.add_argument('termCode', metavar='termCode', type=str, nargs='+', help='an integer for the accumulator')
+args = parser.parse_args()
+term_code = args.termCode[0]
+if len(args.termCode[0]) is not 5:
+    raise ValueError("Invalid argument. Must be 5 character string <year><term> (1 for fall, 5 for summer, 8 for spring) (ex. 20168 (Fall 2016)")
+    logging.debug("job ran with invalid argument: " + term_code)
+logging.info("deleting all courses for term " + term_code)
+
+
+def retrieve_courses(): 
+    """method to call course api and retrieve all courses
+    parameters: none
+    response: etree object with all courses
+    """  
+
+    logging.info("*******retrieving courses*******")
+    
     payload = {
         'apikey' : apikey,
         'limit' : '100',
@@ -29,99 +46,140 @@ def retrieve_courses():
         #'q' : 'code~2016'
         }
 
-    #create request url
     response = requests.get('https://api-na.hosted.exlibrisgroup.com/almaws/v1/courses/', params=payload)
-    print("***" + response.url + "***")
+    logging.info("***" + response.url + "***")
    
-    root = etree.fromstring(response.content)
+    try:
+        root = etree.fromstring(response.content)
+    except etree.XMLSyntaxError:
+        logging.info("SYNTAX ERROR with above")
+        course_api_exception.append(response.url)
     return root
     
-#****************************
-#filter initial results to remove inactive courses
-#parameters: initial response object from get course api    
-#response: list of active courses in xml format
-#****************************    
 def get_course_ids(courses):
-    #is_inactive = etree.XPath(".//status[text()='ACTIVE']")
-    code = etree.XPath(".//code[contains(text(),'2016')]")
+    """because the q parameter in the request don't fully work for filtering, we must filter for the results we want through here
+    parameters: etree object with courses from get course api
+    response: list of filtered course ids
+    """  
+
+    logging.info("*******courses matching filter*******") 
+    
+    code = etree.XPath(".//code[contains(text(),'" + str(term_code) + "')]")
+    #name = etree.XPath(".//name")
     course_id = etree.XPath(".//id")
     courseids = []
     for element in courses:
         if code(element):
-            print(code(element)[0].text)
+            #logging.info(name(element)[0].text + " | " + code(element)[0].text)
+            logging.info(code(element)[0].text)
             courseids.append(course_id(element)[0].text)
         else:
             root.remove(element)
+    if not courseids:
+        logging.info("No matches")
     return courseids
 
 
-#****************************
-#method to call reading list api and retrieve the reading list for a single course
-#parameters: list of active course ids  
-#response: list of reading list ids
-#****************************
 def check_reading_lists(courseids):
+    """method to call reading list api and retrieve the reading list for a single course
+    parameters: list of active course ids  
+    response: list of reading list ids
+    """
 
-    print("*******checking reading lists*******")
-    #create search parameters
+    logging.info("*******checking reading lists*******")
+
     payload = {
         'apikey' : apikey,
         'limit' : '100',
-        'offset' : '0',
+        'offset' : '0'
         }    
+        
+    courses_to_delete = []
     
-    #create request url
     for courseid in courseids:
         url = 'https://api-na.hosted.exlibrisgroup.com/almaws/v1/courses/' + courseid + '/reading-lists'
+        #logging.info(url)
         r = requests.get(url, params=payload)
-        print(r.url)                
+        logging.info(r.url)
         
-        #for parsing with etree
-        root = etree.fromstring(r.content)
-        readinglistid = etree.XPath('/reading_lists/reading_list/id')
-        if not readinglistid(root):
-            courses_to_delete.append(courseid)
-        else:
-            print("Reading list id: " + readinglistid(root)[0].text + " | course id: " + courseid)
-                
-    #return readinglistids
+        try:
+            root = etree.fromstring(r.content)
+            
+            readinglistid = etree.XPath('/reading_lists/reading_list/id')
+            if not readinglistid(root):
+                courses_to_delete.append(courseid)
+            else:
+                logging.info("Reading list id: " + readinglistid(root)[0].text + " | course id: " + courseid)
+        except etree.XMLSyntaxError:
+            logging.info("SYNTAX ERROR with above")
+            reading_list_api_exception.append(courseid)
+            
+    return courses_to_delete
+        
+def delete_courses(courses_to_delete):
+    """method to delete courses from alma
+    parameters: list of course ids that dont have reading lists associated
+    response: none. logs delete request and status code (204 for success)
+    """
+    logging.info("*******deleting courses*******")
     
-def delete_courses(courseids):
-    print("*******deleting courses*******")
-    #TODO: call delete course
-    for courseid in courseids:
-        print("deleting course" + courseid)
+    payload = {
+        'apikey' : apikey
+        }
     
+    if courses_to_delete:    
+        logging.info("deleting " + str(len(courses_to_delete)) + " courses")
+        for courseid in courses_to_delete:
+            logging.info("deleting: " + courseid)
+            url = 'https://api-na.hosted.exlibrisgroup.com/almaws/v1/courses/' + courseid
+            response = requests.delete(url, params=payload)
+            #logging.info(response.url)
+            #logging.info(response.status_code)
+    else:
+        logging.info("Nothing to delete")
     
+    courses_to_delete = []
     
-#************************
+#**********************************
 # first retrieve list of courses from get courses api
 # then filter the courses, removing all old courses and get their ids
 # send course ids to reading list api and see if they have a reading list.
 # put all courses without a reading list into a list to delete.
-# TODO: delete those courses
-#**********************
+#**********************************
+
 root = retrieve_courses()
 response_contains_courses = etree.XPath("/courses/course")
 
 while response_contains_courses(root):
+    
+        course_ids = get_course_ids(root)
+        
+        if len(course_ids) > 0:
+            courses_to_delete = check_reading_lists(course_ids)
+            delete_courses(courses_to_delete)
+            
+        offset = str(int(offset) + 100)
 
-    #root = etree.fromstring(response.content)
-    
-    course_ids = get_course_ids(root)
-    
-    check_reading_lists(course_ids)
-    
-    offset = str(int(offset) + 100)
-    root = retrieve_courses()
-    
-delete_courses(courses_to_delete)
+        #if int(offset) < 100:
+        root = retrieve_courses()
+        #else:
+        #    break
 
-#create soup for pretty print xml
-soup = str(BeautifulSoup(etree.tostring(root), 'lxml'))
+if course_api_exception:
+    logging.info("***failed course api***")
+    for failed_course in course_api_exception:
+        logging.info(failed_course)
+if reading_list_api_exception:
+    logging.info("***failed reading list***")
+    for failed_reading_list in reading_list_api_exception:
+        logging.info(failed_reading_list)
+    
+    
+#optional: write response to file instead of delete
+#soup = str(BeautifulSoup(etree.tostring(root), 'lxml'))
 
-#write response to file
-response_file = open("courses.xml", "w")
-response_file.write(soup)
-response_file.close()
-print("done")
+#response_file = open("courses.xml", "w")
+#response_file.write(soup)
+#response_file.close()
+
+logging.info("done")
