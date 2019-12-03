@@ -1,17 +1,19 @@
 # alma-delete-course-api
 
-Python script to delete courses in Alma that dont have reading lists. accepts 1 parameter of blackboard term code (ex. 20171) for spring 2017).
+Python script to delete courses in Alma that dont have reading lists.
 
 
 ## delete_courses.py
-the main file. run this, passing in an argument such as "delete_courses.py 20171" and it will delete courses with the course term of 20171 that don't have reading lists. Pulls all courses, searches each course for ones with reading lists, and deletes the ones that don't have a reading list.
+the main file. run this as such: "delete_courses.py", or with a course term argument such as "delete_courses.py 20171" and it will delete courses that don't have reading lists. Pulls all courses (or courses based on the course term argument), searches each course individually to see if it has a reading list, and deletes the ones that don't have a reading list.
 
 ### required packages
-1. requests
-2. lxml
+1. requests (necessary to make the API calls)
+2. lxml (necessary for parsing the returned xml objects)
 
 ### notes
-the course term (ex. 20171) is specific to UM and should be removed for other institutions.
+replace the api key with the key you created in the developer network. recommended testing with a sandbox key first, then production.
+
+the course term (ex. 20171) is optional when running, and is specific to UM and should be modified for other institutions.
 
 query search (q) did not work at the time I created this, but it might work in the future.
 
